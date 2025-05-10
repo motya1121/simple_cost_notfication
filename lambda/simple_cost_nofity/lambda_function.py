@@ -56,7 +56,6 @@ def get_cost_and_usage():
     )
     return response
 
-
 def sort_out_cost(cost_datas, project_data):
     DEFAULT_PROJECT = project_data["default_project"]
     _project_data = project_data["project_data"]
@@ -87,7 +86,7 @@ def sort_out_cost(cost_datas, project_data):
 
     return cost_results
 
-def create_email_html(sort_cost_data):
+def create_email_html(sort_cost_data, budget_yen):
     sorted_data = sorted(sort_cost_data.items(), key=lambda item: item[1], reverse=True)
     top_10 = sorted_data[:10]
     tbody=""
@@ -96,20 +95,28 @@ def create_email_html(sort_cost_data):
         tbody+=f"""<tr>
                 <td>{i}</td>
                 <td>{item}</td>
-                <td>{value*RATE} 円</td>
+                <td>{value*RATE:,.2f} 円</td>
             </tr>"""
         i = i + 1
 
     # 数値の合計値を取得
     total_value = sum(sort_cost_data.values())
 
+    # 今月の予測
+    today = dt.now(timezone.utc)
+    cost_per_day = total_value/today.day
+    predict_month_cost = cost_per_day * 31
+
+    # 予算との差分
+    diff_budget_predict = budget_yen - predict_month_cost*RATE
+
     cost_report=f"""<div>
             <h2>これまでの利用料金</h2>
-            <p>{total_value*RATE} 円</p>
-            <h2>今月の料金予測</h2>
-            <p>XXXX 円</p>
+            <p>{total_value*RATE:,.2f} 円</p>
+            <h2>今月の料金予測(31日で計算)</h2>
+            <p>{predict_month_cost*RATE:,.2f} 円</p>
             <h2>予算との差分</h2>
-            <p>XXXX 円</p>
+            <p>予算({budget_yen})-予測({predict_month_cost*RATE:,.2f})= {diff_budget_predict:,.2f} 円</p>
         </div>
 
         <div>
@@ -172,7 +179,7 @@ def lambda_handler(event, context):
     cost_datas = get_cost_and_usage()["ResultsByTime"]
     sort_results = sort_out_cost(cost_datas, project_data)
     for project, sort_result in sort_results.items():
-        cost_report = create_email_html(sort_result)
+        cost_report = create_email_html(sort_result, project_data["project_data"][project]["budget_yen"])
         send_email(project, cost_report)
 
 if __name__ == "__main__":

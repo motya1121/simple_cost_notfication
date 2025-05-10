@@ -3,13 +3,15 @@
         "projectA": {
             "AccountID": [
                 "123456789012"
-            ]
+            ],
+            "budget_yen": 10000
         },
         "pojectB": {
             "AccountID": [
                 "111111111111",
                 "222222222222"
-            ]
+            ],
+            "budget_yen": 10000
         }
     },
     "default_project": "projectA"
