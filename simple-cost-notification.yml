@@ -1,0 +1,126 @@
+AWSTemplateFormatVersion: '2010-09-09'
+
+Parameters:
+  SesSenderEmailAddress:
+    Type: String
+    Description: 'The email address verified with SES in the deployment region, to be used as the sender. (e.g., your-verified-email@example.com)'
+  ProjectDataParameterName:
+    Type: String
+    Default: SimpleCostNotificationProjectData
+
+Resources:
+  LambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: simple_cost_nofity-lambda-execution-role
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: LambdaSESSendEmailPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - ses:SendEmail
+                  - ses:SendRawEmail
+                Resource:
+                  - !Sub 'arn:aws:ses:${AWS::Region}:${AWS::AccountId}:identity/${SesSenderEmailAddress}'
+        - PolicyName: LambdaSSMParameterReadPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - ssm:GetParameter
+                Resource:
+                  !Join [
+                    '',
+                    [
+                      !Sub 'arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/',
+                      !Ref ProjectDataParameter,
+                    ],
+                  ]
+        - PolicyName: LambdaCostExplorerPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - ce:GetCostAndUsage
+                Resource: '*'
+
+  SimpleCostNotifyLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: simple_cost_nofity
+      Handler: lambda_function.lambda_handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Runtime: python3.9
+      Timeout: 60 # 秒
+      MemorySize: 128 # MB
+      Environment:
+        Variables:
+          Region: !Sub ${AWS::Region}
+          SENDER_EMAIL: !Ref SesSenderEmailAddress
+          PROJECT_DATA_PARAMETER_NAME: !Ref ProjectDataParameterName
+      Code:
+        ZipFile: |
+          import json
+
+          def lambda_handler(event, context):
+              print("simple_cost_nofity Lambda function invoked.")
+              return {
+                  'statusCode': 200,
+                  'body': json.dumps('Minimal Lambda function executed successfully!')
+              }
+
+  ScheduledRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: simple_cost_nofity-schedule
+      Description: 'Rule to trigger simple_cost_nofity Lambda function at 9:30 AM JST'
+      ScheduleExpression: 'cron(30 0 * * ? *)' # UTCで午前0時30分 (JST午前9時30分)
+      State: ENABLED
+      Targets:
+        - Arn: !GetAtt SimpleCostNotifyLambda.Arn
+          Id: 'TargetFunctionV1'
+
+  LambdaInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !GetAtt SimpleCostNotifyLambda.Arn
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt ScheduledRule.Arn
+
+  ProjectDataParameter:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: !Ref ProjectDataParameterName
+      Type: String
+      Value: '{}'
+
+Outputs:
+  LambdaFunctionName:
+    Description: 'Name of the Lambda function'
+    Value: !Ref SimpleCostNotifyLambda
+  LambdaFunctionArn:
+    Description: 'ARN of the Lambda function'
+    Value: !GetAtt SimpleCostNotifyLambda.Arn
+  EventBridgeRuleName:
+    Description: 'Name of the EventBridge rule'
+    Value: !Ref ScheduledRule
+  EventBridgeRuleArn:
+    Description: 'ARN of the EventBridge rule'
+    Value: !GetAtt ScheduledRule.Arn
+  LambdaExecutionRoleArn:
+    Description: 'ARN of the Lambda execution IAM role'
+    Value: !GetAtt LambdaExecutionRole.Arn

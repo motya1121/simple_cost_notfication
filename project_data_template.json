@@ -1,0 +1,16 @@
+{
+    "project_data": {
+        "projectA": {
+            "AccountID": [
+                "123456789012"
+            ]
+        },
+        "pojectB": {
+            "AccountID": [
+                "111111111111",
+                "222222222222"
+            ]
+        }
+    },
+    "default_project": "projectA"
+}
