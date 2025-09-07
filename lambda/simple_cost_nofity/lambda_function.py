@@ -1,9 +1,10 @@
 import json
 import logging
 import os
+from datetime import datetime as dt
+from datetime import timezone
 
 from boto3.session import Session
-from datetime import datetime as dt, timezone
 
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
@@ -15,19 +16,18 @@ if PROFILE_NAME == "":
 else:
     session = Session(region_name=region_name, profile_name=PROFILE_NAME)
 ce_client = session.client("ce")
-ses_client = session.client('ses')
-ssm_client = session.client('ssm')
-SENDER_EMAIL = os.environ.get('SENDER_EMAIL')
-PROJECT_DATA_PARAMETER_NAME = os.environ.get('PROJECT_DATA_PARAMETER_NAME')
+ses_client = session.client("ses")
+ssm_client = session.client("ssm")
+SENDER_EMAIL = os.environ.get("SENDER_EMAIL")
+PROJECT_DATA_PARAMETER_NAME = os.environ.get("PROJECT_DATA_PARAMETER_NAME")
 RATE = 150
 
 
 def get_ssm_parameter():
-    response = ssm_client.get_parameter(
-        Name=PROJECT_DATA_PARAMETER_NAME
-    )
-    parameter_value = json.loads(response['Parameter']['Value'])
+    response = ssm_client.get_parameter(Name=PROJECT_DATA_PARAMETER_NAME)
+    parameter_value = json.loads(response["Parameter"]["Value"])
     return parameter_value
+
 
 def get_cost_and_usage():
     # aws ce get-cost-and-usage --time-period Start=2025-01-01,End=2025-01-31 --granularity DAILY --metrics "UnblendedCost" --group-by Type=DIMENSION,Key=SERVICE Type=DIMENSION,Key=LINKED_ACCOUNT --profile maina
@@ -55,6 +55,7 @@ def get_cost_and_usage():
         ],
     )
     return response
+
 
 def sort_out_cost(cost_datas, project_data):
     DEFAULT_PROJECT = project_data["default_project"]
@@ -86,13 +87,14 @@ def sort_out_cost(cost_datas, project_data):
 
     return cost_results
 
+
 def create_email_html(sort_cost_data, budget_yen):
     sorted_data = sorted(sort_cost_data.items(), key=lambda item: item[1], reverse=True)
     top_10 = sorted_data[:10]
-    tbody=""
+    tbody = ""
     i = 1
     for item, value in top_10:
-        tbody+=f"""<tr>
+        tbody += f"""<tr>
                 <td>{i}</td>
                 <td>{item}</td>
                 <td>{value*RATE:,.2f} 円</td>
@@ -104,13 +106,13 @@ def create_email_html(sort_cost_data, budget_yen):
 
     # 今月の予測
     today = dt.now(timezone.utc)
-    cost_per_day = total_value/today.day
+    cost_per_day = total_value / today.day
     predict_month_cost = cost_per_day * 31
 
     # 予算との差分
-    diff_budget_predict = budget_yen - predict_month_cost*RATE
+    diff_budget_predict = budget_yen - predict_month_cost * RATE
 
-    cost_report=f"""<div>
+    cost_report = f"""<div>
             <h2>これまでの利用料金</h2>
             <p>{total_value*RATE:,.2f} 円</p>
             <h2>今月の料金予測(31日で計算)</h2>
@@ -152,35 +154,31 @@ def send_email(project, cost_report):
         ses_client.send_email(
             Source=SENDER_EMAIL,
             Destination={
-                'ToAddresses': [
+                "ToAddresses": [
                     SENDER_EMAIL,
                 ],
             },
             Message={
-                'Subject': {
-                    'Data': subject,
-                    'Charset': charset
-                },
-                'Body': {
-                    'Html': {
-                        'Data': body_html,
-                        'Charset': charset
-                    }
-                }
-            }
+                "Subject": {"Data": subject, "Charset": charset},
+                "Body": {"Html": {"Data": body_html, "Charset": charset}},
+            },
         )
         print("メールを送信しました。")
     except Exception as e:
         error_message = f"メール送信中にエラーが発生しました: {str(e)}"
         print(f"Error: {error_message}")
 
+
 def lambda_handler(event, context):
     project_data = get_ssm_parameter()
     cost_datas = get_cost_and_usage()["ResultsByTime"]
     sort_results = sort_out_cost(cost_datas, project_data)
     for project, sort_result in sort_results.items():
-        cost_report = create_email_html(sort_result, project_data["project_data"][project]["budget_yen"])
+        cost_report = create_email_html(
+            sort_result, project_data["project_data"][project]["budget_yen"]
+        )
         send_email(project, cost_report)
+
 
 if __name__ == "__main__":
     lambda_handler({}, {})
