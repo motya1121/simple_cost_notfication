@@ -63,7 +63,7 @@ Resources:
       FunctionName: simple_cost_nofity
       Handler: lambda_function.lambda_handler
       Role: !GetAtt LambdaExecutionRole.Arn
-      Runtime: python3.9
+      Runtime: python3.12
       Timeout: 60 # 秒
       MemorySize: 128 # MB
       Environment:
