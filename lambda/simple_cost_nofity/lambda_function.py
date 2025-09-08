@@ -21,7 +21,7 @@ ssm_client = session.client("ssm")
 SENDER_EMAIL = os.environ.get("SENDER_EMAIL")
 PROJECT_DATA_PARAMETER_NAME = os.environ.get("PROJECT_DATA_PARAMETER_NAME")
 SUBJECT = os.environ.get("SUBJECT")
-RATE = os.environ.get("RATE_VALUE")
+RATE = int(os.environ.get("RATE_VALUE"))
 
 
 def get_ssm_parameter():
@@ -155,7 +155,7 @@ def send_email(project, cost_report):
 
     body_html = f"""<html>
     <body>
-        <h1>{subject}({project})(今月の{round(percent)}%終了)</h1>
+        <h1>{SUBJECT} - {project}(今月の{round(percent)}%終了)</h1>
         {cost_report}
     </body>
     </html>"""
