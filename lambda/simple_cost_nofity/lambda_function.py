@@ -120,6 +120,8 @@ def create_email_html(sort_cost_data, budget_yen):
             <p>{predict_month_cost*RATE:,.2f} 円</p>
             <h2>予算との差分</h2>
             <p>予算({budget_yen:,})-予測({predict_month_cost*RATE:,})= {diff_budget_predict:,} 円</p>
+            <h2>予算の利用割合</h2>
+            <p>{round(total_value*100/budget_yen)} %</p>
         </div>
 
         <div>
@@ -143,9 +145,17 @@ def create_email_html(sort_cost_data, budget_yen):
 def send_email(project, cost_report):
     charset = "UTF-8"
 
+    today = dt.now(timezone.utc)
+    if today.month in [1, 3, 5, 7, 8, 10, 12]:
+        percent = int(today.day) * 100 / 31
+    elif today.month == 2:
+        percent = int(today.day) * 100 / 28
+    else:
+        percent = int(today.day) * 100 / 30
+
     body_html = f"""<html>
     <body>
-        <h1>{SUBJECT} - {project}</h1>
+        <h1>{subject}({project})(今月の{round(percent)}%終了)</h1>
         {cost_report}
     </body>
     </html>"""
