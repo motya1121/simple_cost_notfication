@@ -20,7 +20,7 @@ ses_client = session.client("ses")
 ssm_client = session.client("ssm")
 SENDER_EMAIL = os.environ.get("SENDER_EMAIL")
 PROJECT_DATA_PARAMETER_NAME = os.environ.get("PROJECT_DATA_PARAMETER_NAME")
-RATE = 150
+RATE = os.environ.get("RATE_VALUE")
 
 
 def get_ssm_parameter():
