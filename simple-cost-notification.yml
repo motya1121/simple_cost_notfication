@@ -71,6 +71,7 @@ Resources:
           Region: !Sub ${AWS::Region}
           SENDER_EMAIL: !Ref SesSenderEmailAddress
           PROJECT_DATA_PARAMETER_NAME: !Ref ProjectDataParameterName
+          RATE_VALUE: 150
       Code:
         ZipFile: |
           import json
