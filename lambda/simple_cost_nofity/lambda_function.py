@@ -20,6 +20,7 @@ ses_client = session.client("ses")
 ssm_client = session.client("ssm")
 SENDER_EMAIL = os.environ.get("SENDER_EMAIL")
 PROJECT_DATA_PARAMETER_NAME = os.environ.get("PROJECT_DATA_PARAMETER_NAME")
+SUBJECT = os.environ.get("SUBJECT")
 RATE = os.environ.get("RATE_VALUE")
 
 
@@ -140,12 +141,11 @@ def create_email_html(sort_cost_data, budget_yen):
 
 
 def send_email(project, cost_report):
-    subject = "simple_cost_notification"
     charset = "UTF-8"
 
     body_html = f"""<html>
     <body>
-        <h1>{subject}({project})</h1>
+        <h1>{SUBJECT} - {project}</h1>
         {cost_report}
     </body>
     </html>"""
@@ -159,7 +159,7 @@ def send_email(project, cost_report):
                 ],
             },
             Message={
-                "Subject": {"Data": subject, "Charset": charset},
+                "Subject": {"Data": f"{SUBJECT} - {project}", "Charset": charset},
                 "Body": {"Html": {"Data": body_html, "Charset": charset}},
             },
         )
