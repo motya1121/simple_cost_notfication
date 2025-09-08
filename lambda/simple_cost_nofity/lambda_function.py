@@ -20,8 +20,8 @@ ses_client = session.client("ses")
 ssm_client = session.client("ssm")
 SENDER_EMAIL = os.environ.get("SENDER_EMAIL")
 PROJECT_DATA_PARAMETER_NAME = os.environ.get("PROJECT_DATA_PARAMETER_NAME")
-RATE = 150
 SUBJECT = os.environ.get("SUBJECT")
+RATE = os.environ.get("RATE_VALUE")
 
 
 def get_ssm_parameter():
@@ -119,7 +119,7 @@ def create_email_html(sort_cost_data, budget_yen):
             <h2>今月の料金予測(31日で計算)</h2>
             <p>{predict_month_cost*RATE:,.2f} 円</p>
             <h2>予算との差分</h2>
-            <p>予算({budget_yen})-予測({predict_month_cost*RATE:,.2f})= {diff_budget_predict:,.2f} 円</p>
+            <p>予算({budget_yen:,})-予測({predict_month_cost*RATE:,})= {diff_budget_predict:,} 円</p>
         </div>
 
         <div>

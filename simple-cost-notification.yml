@@ -72,6 +72,7 @@ Resources:
           SENDER_EMAIL: !Ref SesSenderEmailAddress
           PROJECT_DATA_PARAMETER_NAME: !Ref ProjectDataParameterName
           SUBJECT: "simple cost notification"
+          RATE_VALUE: 150
       Code:
         ZipFile: |
           import json
