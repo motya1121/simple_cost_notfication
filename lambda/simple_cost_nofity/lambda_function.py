@@ -121,7 +121,7 @@ def create_email_html(sort_cost_data, budget_yen):
             <h2>予算との差分</h2>
             <p>予算({budget_yen:,})-予測({predict_month_cost*RATE:,})= {diff_budget_predict:,} 円</p>
             <h2>予算の利用割合</h2>
-            <p>{round(total_value*100/budget_yen)} %</p>
+            <p>{round(total_value*RATE*100/budget_yen)} %</p>
         </div>
 
         <div>
