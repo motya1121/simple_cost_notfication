@@ -5,6 +5,8 @@ name = "pypi"
 
 [packages]
 boto3 = "*"
+azure-identity = "*"
+azure-mgmt-costmanagement = "*"
 
 [dev-packages]
 
