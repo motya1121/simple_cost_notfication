@@ -47,9 +47,7 @@ def get_cost_and_usage():
     response = ce_client.get_cost_and_usage(
         TimePeriod={"Start": period_start, "End": period_end},
         Granularity="DAILY",
-        Metrics=[
-            "UnblendedCost",
-        ],
+        Metrics=["UnblendedCost", "NetUnblendedCost"],
         GroupBy=[
             {"Type": "DIMENSION", "Key": "SERVICE"},
             {"Type": "DIMENSION", "Key": "LINKED_ACCOUNT"},
@@ -69,7 +67,10 @@ def sort_out_cost(cost_datas, project_data):
         for group in cost_data["Groups"]:
             service = group["Keys"][0]
             account_id = group["Keys"][1]
-            usd = float(group["Metrics"]["UnblendedCost"]["Amount"])
+            try:
+                usd = float(group["Metrics"]["NetUnblendedCost"]["Amount"])
+            except KeyError:
+                usd = float(group["Metrics"]["UnblendedCost"]["Amount"])
 
             project_flag = False
             for project_name, cost_result in cost_results.items():
@@ -115,11 +116,11 @@ def create_email_html(sort_cost_data, budget_yen):
 
     cost_report = f"""<div>
             <h2>これまでの利用料金</h2>
-            <p>{total_value*RATE:,.2f} 円</p>
+            <p>{total_value*RATE:,.0f} 円</p>
             <h2>今月の料金予測(31日で計算)</h2>
-            <p>{predict_month_cost*RATE:,.2f} 円</p>
+            <p>{predict_month_cost*RATE:,.0f} 円</p>
             <h2>予算との差分</h2>
-            <p>予算({budget_yen:,})-予測({predict_month_cost*RATE:,})= {diff_budget_predict:,} 円</p>
+            <p>予算({budget_yen:,})-予測({predict_month_cost*RATE:,.0f})= {diff_budget_predict:,.0f} 円</p>
             <h2>予算の利用割合</h2>
             <p>{round(total_value*RATE*100/budget_yen)} %</p>
         </div>
