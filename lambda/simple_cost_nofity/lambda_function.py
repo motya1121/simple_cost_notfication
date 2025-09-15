@@ -179,7 +179,14 @@ def sort_out_azure_cost(cost_datas, project_data):
 
 
 def create_email_html(sort_cost_data, budget_yen):
-    sorted_data = sorted(sort_cost_data.items(), key=lambda item: item[1], reverse=True)
+    # AWS
+    aws_total_cost = sum(sort_cost_data["AWS"].values())
+    azure_total_cost = sum(sort_cost_data["Azure"].values())
+
+    all_cost_data = sort_cost_data["AWS"]
+    all_cost_data.update(sort_cost_data["Azure"])
+
+    sorted_data = sorted(all_cost_data.items(), key=lambda item: item[1], reverse=True)
     top_10 = sorted_data[:10]
     tbody = ""
     i = 1
@@ -192,7 +199,7 @@ def create_email_html(sort_cost_data, budget_yen):
         i = i + 1
 
     # 数値の合計値を取得
-    total_value = sum(sort_cost_data.values())
+    total_value = sum(all_cost_data.values())
 
     # 今月の予測
     today = dt.now(timezone.utc)
@@ -212,6 +219,29 @@ def create_email_html(sort_cost_data, budget_yen):
             <h2>予算の利用割合</h2>
             <p>{round(total_value*100/budget_yen)} %</p>
         </div>
+
+        <div>
+            <h2>クラウドごとの利用料金</h2>
+            <table>
+                <thead>
+                    <tr>
+                        <th>クラウドプロバイダ</th>
+                        <th>利用料</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td>AWS</td>
+                        <td>{aws_total_cost:,.0f} 円</td>
+                    </tr>
+                    <tr>
+                        <td>Azure</td>
+                        <td>{azure_total_cost:,.0f} 円</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+
 
         <div>
             <h2>利用料が高いリソース トップ10</h2>
@@ -281,12 +311,15 @@ def lambda_handler(event, context):
     sort_azure_results = sort_out_azure_cost(azure_cost_data, project_data)
 
     # join
-    sort_results = sort_aws_results
+    sort_results = {}
+    for project, sort_result in sort_aws_results.items():
+        sort_results[project] = {}
+        sort_results[project]["AWS"] = sort_result
     for project, sort_result in sort_azure_results.items():
         if sort_results.get(project, None) is not None:
-            sort_results[project].update(sort_result)
+            sort_results[project]["Azure"] = sort_result
         else:
-            sort_results[project] = sort_result
+            sort_results[project]["Azure"] = sort_result
 
     for project, sort_result in sort_results.items():
         cost_report = create_email_html(
