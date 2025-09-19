@@ -31,7 +31,7 @@ SENDER_EMAIL = os.environ.get("SENDER_EMAIL")
 PROJECT_DATA_PARAMETER_NAME = os.environ.get("PROJECT_DATA_PARAMETER_NAME")
 SECRET_PARAMETER_NAME = os.environ.get("SECRET_PARAMETER_NAME")
 SUBJECT = os.environ.get("SUBJECT", "simple cost notification")
-RATE = int(os.environ.get("RATE_VALUE"))
+RATE = float(os.environ.get("RATE_VALUE"))
 
 
 def get_ssm_parameter():
@@ -57,17 +57,31 @@ def get_aws_cost_and_usage():
         next_year = current_year + 1
     period_start = f"{current_year}-{current_month:02}-01"
     period_end = f"{next_year}-{next_month:02}-01"
-
-    response = ce_client.get_cost_and_usage(
-        TimePeriod={"Start": period_start, "End": period_end},
-        Granularity="DAILY",
-        Metrics=["UnblendedCost", "NetUnblendedCost"],
-        GroupBy=[
+    params = {
+        "TimePeriod": {"Start": period_start, "End": period_end},
+        "Granularity": "DAILY",
+        "Metrics": ["UnblendedCost", "NetUnblendedCost"],
+        "GroupBy": [
             {"Type": "DIMENSION", "Key": "SERVICE"},
             {"Type": "DIMENSION", "Key": "LINKED_ACCOUNT"},
         ],
-    )
-    return response
+    }
+
+    all_results = []
+    next_page_token = None
+
+    # ループで全ページを取得
+    while True:
+        if next_page_token:
+            params["NextPageToken"] = next_page_token
+
+        response = ce_client.get_cost_and_usage(**params)
+        all_results.extend(response["ResultsByTime"])
+        next_page_token = response.get("NextPageToken")
+        if not next_page_token:
+            break
+
+    return all_results
 
 
 def sort_out_aws_cost(cost_datas, project_data):
@@ -93,30 +107,30 @@ def sort_out_aws_cost(cost_datas, project_data):
                 if account_id in _project_data[project_name]["AccountID"]:
                     # per service
                     if service in cost_result.keys():
-                        cost_result[service] += usd * RATE
+                        cost_result[service] += usd
                     else:
-                        cost_result[service] = usd * RATE
+                        cost_result[service] = usd
 
                     # per account id
                     if account_id in cost_results_account[project_name].keys():
-                        cost_results_account[project_name][account_id] += usd * RATE
+                        cost_results_account[project_name][account_id] += usd
                     else:
-                        cost_results_account[project_name][account_id] = usd * RATE
+                        cost_results_account[project_name][account_id] = usd
 
                     project_flag = True
 
             if project_flag is False:
                 # per service
                 if service in cost_results[DEFAULT_PROJECT].keys():
-                    cost_results[DEFAULT_PROJECT][service] += usd * RATE
+                    cost_results[DEFAULT_PROJECT][service] += usd
                 else:
-                    cost_results[DEFAULT_PROJECT][service] = usd * RATE
+                    cost_results[DEFAULT_PROJECT][service] = usd
 
                 # per account
                 if account_id in cost_results_account[DEFAULT_PROJECT].keys():
-                    cost_results_account[DEFAULT_PROJECT][account_id] += usd * RATE
+                    cost_results_account[DEFAULT_PROJECT][account_id] += usd
                 else:
-                    cost_results_account[DEFAULT_PROJECT][account_id] = usd * RATE
+                    cost_results_account[DEFAULT_PROJECT][account_id] = usd
 
     return cost_results, cost_results_account
 
@@ -223,12 +237,15 @@ def sort_out_azure_cost(cost_datas, project_data):
 
 def create_email_html(sort_cost_data, budget_yen):
     # AWS
-    aws_total_cost = sum(sort_cost_data["AWS"].values())
+    aws_total_cost = sum(sort_cost_data["AWS"].values()) * RATE
     azure_total_cost = sum(sort_cost_data["Azure"].values())
 
-    all_cost_data = sort_cost_data["AWS"]
+    all_cost_data = {}
+    for service, cost in sort_cost_data["AWS"].items():
+        all_cost_data[service] = cost * RATE
     all_cost_data.update(sort_cost_data["Azure"])
 
+    # top 10
     sorted_data = sorted(all_cost_data.items(), key=lambda item: item[1], reverse=True)
     top_10 = sorted_data[:10]
     tbody = ""
@@ -251,6 +268,15 @@ def create_email_html(sort_cost_data, budget_yen):
 
     # 予算との差分
     diff_budget_predict = budget_yen - predict_month_cost
+
+    # アカウントごと
+    per_account = ""
+    for account_id, cost_data in sort_cost_data["AWS_Accounts"].items():
+        per_account += (
+            f"<tr><td>{account_id}</td><td>{cost_data*RATE:,.0f} 円</td></tr>"
+        )
+    for account_id, cost_data in sort_cost_data["Azure_Accounts"].items():
+        per_account += f"<tr><td>{account_id}</td><td>{cost_data:,.0f} 円</td></tr>"
 
     cost_report = f"""<div>
             <h2>これまでの利用料金</h2>
@@ -285,6 +311,20 @@ def create_email_html(sort_cost_data, budget_yen):
             </table>
         </div>
 
+        <div>
+            <h2>アカウントごとの利用料金</h2>
+            <table>
+                <thead>
+                    <tr>
+                        <th>アカウント</th>
+                        <th>利用料</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {per_account}
+                </tbody>
+            </table>
+        </div>
 
         <div>
             <h2>利用料が高いリソース トップ10</h2>
@@ -345,7 +385,7 @@ def lambda_handler(event, context):
     project_data, az_credentials = get_ssm_parameter()
 
     # AWS
-    aws_cost_datas = get_aws_cost_and_usage()["ResultsByTime"]
+    aws_cost_datas = get_aws_cost_and_usage()
     sort_aws_results, sort_aws_account_results = sort_out_aws_cost(
         aws_cost_datas, project_data
     )
@@ -356,7 +396,7 @@ def lambda_handler(event, context):
         azure_cost_data, project_data
     )
 
-    # join
+    # join service
     sort_results = {}
     for project, sort_result in sort_aws_results.items():
         sort_results[project] = {}
@@ -366,6 +406,12 @@ def lambda_handler(event, context):
             sort_results[project]["Azure"] = sort_result
         else:
             sort_results[project]["Azure"] = sort_result
+
+    # join account
+    for project, sort_result in sort_aws_account_results.items():
+        sort_results[project]["AWS_Accounts"] = sort_result
+    for project, sort_result in sort_azure_account_results.items():
+        sort_results[project]["Azure_Accounts"] = sort_result
 
     for project, sort_result in sort_results.items():
         cost_report = create_email_html(
