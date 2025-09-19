@@ -1,3 +1,4 @@
+import base64
 import json
 import logging
 import os
@@ -28,14 +29,19 @@ ses_client = session.client("ses")
 ssm_client = session.client("ssm")
 SENDER_EMAIL = os.environ.get("SENDER_EMAIL")
 PROJECT_DATA_PARAMETER_NAME = os.environ.get("PROJECT_DATA_PARAMETER_NAME")
-SUBJECT = os.environ.get("SUBJECT")
+SECRET_PARAMETER_NAME = os.environ.get("SECRET_PARAMETER_NAME")
+SUBJECT = os.environ.get("SUBJECT", "simple cost notification")
 RATE = int(os.environ.get("RATE_VALUE"))
 
 
 def get_ssm_parameter():
     response = ssm_client.get_parameter(Name=PROJECT_DATA_PARAMETER_NAME)
-    parameter_value = json.loads(response["Parameter"]["Value"])
-    return parameter_value
+    project_data = json.loads(response["Parameter"]["Value"])
+
+    response = ssm_client.get_parameter(Name=SECRET_PARAMETER_NAME, WithDecryption=True)
+    az_credentials = json.loads(response["Parameter"]["Value"])
+
+    return project_data, az_credentials
 
 
 def get_aws_cost_and_usage():
@@ -98,54 +104,58 @@ def sort_out_aws_cost(cost_datas, project_data):
     return cost_results
 
 
-def get_azure_cost_and_usage(subscription_id: str):
+def get_azure_cost_and_usage(az_credentials: list):
     # 環境変数から認証情報を取得
-    try:
-        credential = ClientSecretCredential(
-            tenant_id=os.environ["AZ_TENANT_ID"],
-            client_id=os.environ["AZ_CLIENT_ID"],
-            client_secret=os.environ["AZ_CLIENT_SECRET"],
+
+    for az_credential in az_credentials:
+        try:
+            credential = ClientSecretCredential(
+                tenant_id=az_credential["az_tenant_id"],
+                client_id=az_credential["az_client_id"],
+                client_secret=az_credential["az_client_secret"],
+            )
+        except KeyError:
+            print(
+                "エラー: 必要な環境変数（AZURE_TENANT_ID, AZURE_CLIENT_ID, AZURE_CLIENT_SECRET）が設定されていません。"
+            )
+            return None
+
+        # Cost Management クライアントの初期化
+        cost_management_client = CostManagementClient(credential)
+
+        # クエリのスコープ（対象範囲）を設定
+        scope = f"/subscriptions/{az_credential['az_subscription_id']}"
+
+        # Cost Management APIに投げるクエリを定義
+        query_definition = QueryDefinition(
+            type="ActualCost",  # 実績コストを取得
+            timeframe="MonthToDate",  # 期間を「当月初日から本日まで」に設定
+            dataset=QueryDataset(
+                granularity="Daily",  # 日単位で集計
+                aggregation={
+                    "totalCost": QueryAggregation(name="Cost", function="Sum")
+                },
+                grouping=[
+                    QueryGrouping(type="Dimension", name="SubscriptionId"),
+                    QueryGrouping(type="Dimension", name="SubscriptionName"),
+                    QueryGrouping(type="Dimension", name="ServiceName"),
+                ],
+            ),
         )
-    except KeyError:
-        print(
-            "エラー: 必要な環境変数（AZURE_TENANT_ID, AZURE_CLIENT_ID, AZURE_CLIENT_SECRET）が設定されていません。"
-        )
-        return None
 
-    # Cost Management クライアントの初期化
-    cost_management_client = CostManagementClient(credential)
+        try:
+            # APIを実行してコスト情報を取得
+            result = cost_management_client.query.usage(scope, query_definition)
 
-    # クエリのスコープ（対象範囲）を設定
-    scope = f"/subscriptions/{subscription_id}"
+            # 結果を整形
+            # columns = [col.name for col in result.columns]
+            data = result.rows
 
-    # Cost Management APIに投げるクエリを定義
-    query_definition = QueryDefinition(
-        type="ActualCost",  # 実績コストを取得
-        timeframe="MonthToDate",  # 期間を「当月初日から本日まで」に設定
-        dataset=QueryDataset(
-            granularity="Daily",  # 日単位で集計
-            aggregation={"totalCost": QueryAggregation(name="Cost", function="Sum")},
-            grouping=[
-                QueryGrouping(type="Dimension", name="SubscriptionId"),
-                QueryGrouping(type="Dimension", name="SubscriptionName"),
-                QueryGrouping(type="Dimension", name="ServiceName"),
-            ],
-        ),
-    )
+        except Exception as e:
+            print(f"エラーが発生しました: {e}")
+            return None
 
-    try:
-        # APIを実行してコスト情報を取得
-        result = cost_management_client.query.usage(scope, query_definition)
-
-        # 結果を整形
-        # columns = [col.name for col in result.columns]
-        data = result.rows
-
-    except Exception as e:
-        print(f"エラーが発生しました: {e}")
-        return None
-
-    return data
+        return data
 
 
 def sort_out_azure_cost(cost_datas, project_data):
@@ -299,15 +309,14 @@ def send_email(project, cost_report):
 
 
 def lambda_handler(event, context):
-    project_data = get_ssm_parameter()
+    project_data, az_credentials = get_ssm_parameter()
 
     # AWS
     aws_cost_datas = get_aws_cost_and_usage()["ResultsByTime"]
     sort_aws_results = sort_out_aws_cost(aws_cost_datas, project_data)
 
     # Azure
-    target_subscription_id = os.environ["AZ_SUB_ID"]
-    azure_cost_data = get_azure_cost_and_usage(target_subscription_id)
+    azure_cost_data = get_azure_cost_and_usage(az_credentials=az_credentials)
     sort_azure_results = sort_out_azure_cost(azure_cost_data, project_data)
 
     # join
