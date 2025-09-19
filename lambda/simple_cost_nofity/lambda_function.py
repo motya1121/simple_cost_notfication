@@ -74,8 +74,10 @@ def sort_out_aws_cost(cost_datas, project_data):
     DEFAULT_PROJECT = project_data["default_project"]
     _project_data = project_data["project_data"]
     cost_results = {}
+    cost_results_account = {}
     for project_name in _project_data.keys():
         cost_results[project_name] = {}
+        cost_results_account[project_name] = {}
 
     for cost_data in cost_datas:
         for group in cost_data["Groups"]:
@@ -89,19 +91,34 @@ def sort_out_aws_cost(cost_datas, project_data):
             project_flag = False
             for project_name, cost_result in cost_results.items():
                 if account_id in _project_data[project_name]["AccountID"]:
+                    # per service
                     if service in cost_result.keys():
                         cost_result[service] += usd * RATE
                     else:
                         cost_result[service] = usd * RATE
+
+                    # per account id
+                    if account_id in cost_results_account[project_name].keys():
+                        cost_results_account[project_name][account_id] += usd * RATE
+                    else:
+                        cost_results_account[project_name][account_id] = usd * RATE
+
                     project_flag = True
 
             if project_flag is False:
+                # per service
                 if service in cost_results[DEFAULT_PROJECT].keys():
                     cost_results[DEFAULT_PROJECT][service] += usd * RATE
                 else:
                     cost_results[DEFAULT_PROJECT][service] = usd * RATE
 
-    return cost_results
+                # per account
+                if account_id in cost_results_account[DEFAULT_PROJECT].keys():
+                    cost_results_account[DEFAULT_PROJECT][account_id] += usd * RATE
+                else:
+                    cost_results_account[DEFAULT_PROJECT][account_id] = usd * RATE
+
+    return cost_results, cost_results_account
 
 
 def get_azure_cost_and_usage(az_credentials: list):
@@ -162,8 +179,10 @@ def sort_out_azure_cost(cost_datas, project_data):
     DEFAULT_PROJECT = project_data["default_project"]
     _project_data = project_data["project_data"]
     cost_results = {}
+    cost_results_account = {}
     for project_name in _project_data.keys():
         cost_results[project_name] = {}
+        cost_results_account[project_name] = {}
 
     for cost_data in cost_datas:
         cost_jpy = cost_data[0]
@@ -173,19 +192,33 @@ def sort_out_azure_cost(cost_datas, project_data):
         project_flag = False
         for project_name, cost_result in cost_results.items():
             if sub_id in _project_data[project_name]["SubscriptionID"]:
+                # per service
                 if service in cost_result.keys():
                     cost_result[service] += cost_jpy
                 else:
                     cost_result[service] = cost_jpy
+
+                # per account id
+                if sub_id in cost_results_account[project_name].keys():
+                    cost_results_account[project_name][sub_id] += cost_jpy
+                else:
+                    cost_results_account[project_name][sub_id] = cost_jpy
                 project_flag = True
 
         if project_flag is False:
+            # per service
             if service in cost_results[DEFAULT_PROJECT].keys():
                 cost_results[DEFAULT_PROJECT][service] += cost_jpy
             else:
                 cost_results[DEFAULT_PROJECT][service] = cost_jpy
 
-    return cost_results
+            # per account
+            if sub_id in cost_results_account[DEFAULT_PROJECT].keys():
+                cost_results_account[DEFAULT_PROJECT][sub_id] += cost_jpy
+            else:
+                cost_results_account[DEFAULT_PROJECT][sub_id] = cost_jpy
+
+    return cost_results, cost_results_account
 
 
 def create_email_html(sort_cost_data, budget_yen):
@@ -313,11 +346,15 @@ def lambda_handler(event, context):
 
     # AWS
     aws_cost_datas = get_aws_cost_and_usage()["ResultsByTime"]
-    sort_aws_results = sort_out_aws_cost(aws_cost_datas, project_data)
+    sort_aws_results, sort_aws_account_results = sort_out_aws_cost(
+        aws_cost_datas, project_data
+    )
 
     # Azure
     azure_cost_data = get_azure_cost_and_usage(az_credentials=az_credentials)
-    sort_azure_results = sort_out_azure_cost(azure_cost_data, project_data)
+    sort_azure_results, sort_azure_account_results = sort_out_azure_cost(
+        azure_cost_data, project_data
+    )
 
     # join
     sort_results = {}
