@@ -4,12 +4,19 @@
             "AccountID": [
                 "123456789012"
             ],
+            "SubscriptionID": [
+                "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+            ],
             "budget_yen": 10000
         },
         "pojectB": {
             "AccountID": [
                 "111111111111",
                 "222222222222"
+            ],
+            "SubscriptionID": [
+                "yyyyyyyy-yyyy-yyyy-yyyy-yyyyyyyyyyyy",
+                "zzzzzzzz-zzzz-zzzz-zzzz-zzzzzzzzzzz"
             ],
             "budget_yen": 10000
         }
