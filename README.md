@@ -4,12 +4,13 @@
 
 1. 送付先メールアドレスをSESに登録
 2. Secret Parameter Storeを`/SimpleCostNotification/AZClientSecret`という名前で作成
-3. `simple-cost-notification.yml`をデプロイ
-4. `.env.sample`を参考に`.env`を作成
-5. ssmパラメータストアに`project_data_template.json`の形式でデータを投入
+3. `/SimpleCostNotification/AZClientSecret`に`AZ_client_secret_template.json`の形式でデータを投入
+4. `simple-cost-notification.yml`をデプロイ
+5. `.env.sample`を参考に`.env`を作成
+6. ssmパラメータストアに`project_data_template.json`の形式でデータを投入
    - 全てのAWSアカウントを設定する必要はない
    - 指定しなかったAWSアカウントの料金は`default_project`で指定したプロジェクトに含まれる
-6. `upload_zip_code.sh`でlambda関数をデプロイ
+7. `upload_zip_code.sh`でlambda関数をデプロイ
 
 ## プログラムについて
 
