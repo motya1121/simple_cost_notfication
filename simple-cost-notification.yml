@@ -6,7 +6,11 @@ Parameters:
     Description: 'The email address verified with SES in the deployment region, to be used as the sender. (e.g., your-verified-email@example.com)'
   ProjectDataParameterName:
     Type: String
-    Default: SimpleCostNotificationProjectData
+    Default: '/SimpleCostNotification/ProjectData'
+  AZClientSecretParameterName:
+    Type: String
+    Description: 'ARN for the new SecureString parameter in SSM Parameter Store.'
+    Default: '/SimpleCostNotification/AZClientSecret'
 
 Resources:
   LambdaExecutionRole:
@@ -41,13 +45,8 @@ Resources:
                 Action:
                   - ssm:GetParameter
                 Resource:
-                  !Join [
-                    '',
-                    [
-                      !Sub 'arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/',
-                      !Ref ProjectDataParameter,
-                    ],
-                  ]
+                  - !Sub 'arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/${ProjectDataParameterName}'
+                  - !Sub 'arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/${AZClientSecretParameterName}'
         - PolicyName: LambdaCostExplorerPolicy
           PolicyDocument:
             Version: '2012-10-17'
@@ -71,6 +70,7 @@ Resources:
           Region: !Sub ${AWS::Region}
           SENDER_EMAIL: !Ref SesSenderEmailAddress
           PROJECT_DATA_PARAMETER_NAME: !Ref ProjectDataParameterName
+          SECRET_PARAMETER_NAME: !Ref AZClientSecretParameterName
           SUBJECT: "simple cost notification"
           RATE_VALUE: 150
       Code:

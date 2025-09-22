@@ -1,9 +1,18 @@
+import base64
 import json
 import logging
 import os
 from datetime import datetime as dt
 from datetime import timezone
 
+from azure.identity import ClientSecretCredential
+from azure.mgmt.costmanagement import CostManagementClient
+from azure.mgmt.costmanagement.models import (
+    QueryAggregation,
+    QueryDataset,
+    QueryDefinition,
+    QueryGrouping,
+)
 from boto3.session import Session
 
 logger = logging.getLogger()
@@ -20,17 +29,22 @@ ses_client = session.client("ses")
 ssm_client = session.client("ssm")
 SENDER_EMAIL = os.environ.get("SENDER_EMAIL")
 PROJECT_DATA_PARAMETER_NAME = os.environ.get("PROJECT_DATA_PARAMETER_NAME")
-SUBJECT = os.environ.get("SUBJECT")
-RATE = int(os.environ.get("RATE_VALUE"))
+SECRET_PARAMETER_NAME = os.environ.get("SECRET_PARAMETER_NAME")
+SUBJECT = os.environ.get("SUBJECT", "simple cost notification")
+RATE = float(os.environ.get("RATE_VALUE"))
 
 
 def get_ssm_parameter():
     response = ssm_client.get_parameter(Name=PROJECT_DATA_PARAMETER_NAME)
-    parameter_value = json.loads(response["Parameter"]["Value"])
-    return parameter_value
+    project_data = json.loads(response["Parameter"]["Value"])
+
+    response = ssm_client.get_parameter(Name=SECRET_PARAMETER_NAME, WithDecryption=True)
+    az_credentials = json.loads(response["Parameter"]["Value"])
+
+    return project_data, az_credentials
 
 
-def get_cost_and_usage():
+def get_aws_cost_and_usage():
     # aws ce get-cost-and-usage --time-period Start=2025-01-01,End=2025-01-31 --granularity DAILY --metrics "UnblendedCost" --group-by Type=DIMENSION,Key=SERVICE Type=DIMENSION,Key=LINKED_ACCOUNT --profile maina
 
     today = dt.now(timezone.utc)
@@ -43,25 +57,41 @@ def get_cost_and_usage():
         next_year = current_year + 1
     period_start = f"{current_year}-{current_month:02}-01"
     period_end = f"{next_year}-{next_month:02}-01"
-
-    response = ce_client.get_cost_and_usage(
-        TimePeriod={"Start": period_start, "End": period_end},
-        Granularity="DAILY",
-        Metrics=["UnblendedCost", "NetUnblendedCost"],
-        GroupBy=[
+    params = {
+        "TimePeriod": {"Start": period_start, "End": period_end},
+        "Granularity": "DAILY",
+        "Metrics": ["UnblendedCost", "NetUnblendedCost"],
+        "GroupBy": [
             {"Type": "DIMENSION", "Key": "SERVICE"},
             {"Type": "DIMENSION", "Key": "LINKED_ACCOUNT"},
         ],
-    )
-    return response
+    }
+
+    all_results = []
+    next_page_token = None
+
+    # ループで全ページを取得
+    while True:
+        if next_page_token:
+            params["NextPageToken"] = next_page_token
+
+        response = ce_client.get_cost_and_usage(**params)
+        all_results.extend(response["ResultsByTime"])
+        next_page_token = response.get("NextPageToken")
+        if not next_page_token:
+            break
+
+    return all_results
 
 
-def sort_out_cost(cost_datas, project_data):
+def sort_out_aws_cost(cost_datas, project_data):
     DEFAULT_PROJECT = project_data["default_project"]
     _project_data = project_data["project_data"]
     cost_results = {}
+    cost_results_account = {}
     for project_name in _project_data.keys():
         cost_results[project_name] = {}
+        cost_results_account[project_name] = {}
 
     for cost_data in cost_datas:
         for group in cost_data["Groups"]:
@@ -75,23 +105,148 @@ def sort_out_cost(cost_datas, project_data):
             project_flag = False
             for project_name, cost_result in cost_results.items():
                 if account_id in _project_data[project_name]["AccountID"]:
+                    # per service
                     if service in cost_result.keys():
                         cost_result[service] += usd
                     else:
                         cost_result[service] = usd
+
+                    # per account id
+                    if account_id in cost_results_account[project_name].keys():
+                        cost_results_account[project_name][account_id] += usd
+                    else:
+                        cost_results_account[project_name][account_id] = usd
+
                     project_flag = True
 
             if project_flag is False:
+                # per service
                 if service in cost_results[DEFAULT_PROJECT].keys():
                     cost_results[DEFAULT_PROJECT][service] += usd
                 else:
                     cost_results[DEFAULT_PROJECT][service] = usd
 
-    return cost_results
+                # per account
+                if account_id in cost_results_account[DEFAULT_PROJECT].keys():
+                    cost_results_account[DEFAULT_PROJECT][account_id] += usd
+                else:
+                    cost_results_account[DEFAULT_PROJECT][account_id] = usd
+
+    return cost_results, cost_results_account
+
+
+def get_azure_cost_and_usage(az_credentials: list):
+    # 環境変数から認証情報を取得
+
+    for az_credential in az_credentials:
+        try:
+            credential = ClientSecretCredential(
+                tenant_id=az_credential["az_tenant_id"],
+                client_id=az_credential["az_client_id"],
+                client_secret=az_credential["az_client_secret"],
+            )
+        except KeyError:
+            print(
+                "エラー: 必要な環境変数（AZURE_TENANT_ID, AZURE_CLIENT_ID, AZURE_CLIENT_SECRET）が設定されていません。"
+            )
+            return None
+
+        # Cost Management クライアントの初期化
+        cost_management_client = CostManagementClient(credential)
+
+        # クエリのスコープ（対象範囲）を設定
+        scope = f"/subscriptions/{az_credential['az_subscription_id']}"
+
+        # Cost Management APIに投げるクエリを定義
+        query_definition = QueryDefinition(
+            type="ActualCost",  # 実績コストを取得
+            timeframe="MonthToDate",  # 期間を「当月初日から本日まで」に設定
+            dataset=QueryDataset(
+                granularity="Daily",  # 日単位で集計
+                aggregation={
+                    "totalCost": QueryAggregation(name="Cost", function="Sum")
+                },
+                grouping=[
+                    QueryGrouping(type="Dimension", name="SubscriptionId"),
+                    QueryGrouping(type="Dimension", name="SubscriptionName"),
+                    QueryGrouping(type="Dimension", name="ServiceName"),
+                ],
+            ),
+        )
+
+        try:
+            # APIを実行してコスト情報を取得
+            result = cost_management_client.query.usage(scope, query_definition)
+
+            # 結果を整形
+            # columns = [col.name for col in result.columns]
+            data = result.rows
+
+        except Exception as e:
+            print(f"エラーが発生しました: {e}")
+            return None
+
+        return data
+
+
+def sort_out_azure_cost(cost_datas, project_data):
+    DEFAULT_PROJECT = project_data["default_project"]
+    _project_data = project_data["project_data"]
+    cost_results = {}
+    cost_results_account = {}
+    for project_name in _project_data.keys():
+        cost_results[project_name] = {}
+        cost_results_account[project_name] = {}
+
+    for cost_data in cost_datas:
+        cost_jpy = cost_data[0]
+        sub_id = cost_data[2]
+        service = cost_data[4]
+
+        project_flag = False
+        for project_name, cost_result in cost_results.items():
+            if sub_id in _project_data[project_name]["SubscriptionID"]:
+                # per service
+                if service in cost_result.keys():
+                    cost_result[service] += cost_jpy
+                else:
+                    cost_result[service] = cost_jpy
+
+                # per account id
+                if sub_id in cost_results_account[project_name].keys():
+                    cost_results_account[project_name][sub_id] += cost_jpy
+                else:
+                    cost_results_account[project_name][sub_id] = cost_jpy
+                project_flag = True
+
+        if project_flag is False:
+            # per service
+            if service in cost_results[DEFAULT_PROJECT].keys():
+                cost_results[DEFAULT_PROJECT][service] += cost_jpy
+            else:
+                cost_results[DEFAULT_PROJECT][service] = cost_jpy
+
+            # per account
+            if sub_id in cost_results_account[DEFAULT_PROJECT].keys():
+                cost_results_account[DEFAULT_PROJECT][sub_id] += cost_jpy
+            else:
+                cost_results_account[DEFAULT_PROJECT][sub_id] = cost_jpy
+
+    return cost_results, cost_results_account
 
 
 def create_email_html(sort_cost_data, budget_yen):
-    sorted_data = sorted(sort_cost_data.items(), key=lambda item: item[1], reverse=True)
+    # AWS
+    aws_total_cost = sum(sort_cost_data["AWS"].values()) * RATE
+    azure_total_cost = sum(sort_cost_data["Azure"].values())
+
+    all_cost_data = {}
+    for service, cost in sort_cost_data["AWS"].items():
+        all_cost_data[service] = cost * RATE
+    all_cost_data.update(sort_cost_data["Azure"])
+
+    # top 10
+    sorted_data = sorted(all_cost_data.items(), key=lambda item: item[1], reverse=True)
     top_10 = sorted_data[:10]
     tbody = ""
     i = 1
@@ -99,12 +254,12 @@ def create_email_html(sort_cost_data, budget_yen):
         tbody += f"""<tr>
                 <td>{i}</td>
                 <td>{item}</td>
-                <td>{value*RATE:,.2f} 円</td>
+                <td>{value:,.2f} 円</td>
             </tr>"""
         i = i + 1
 
     # 数値の合計値を取得
-    total_value = sum(sort_cost_data.values())
+    total_value = sum(all_cost_data.values())
 
     # 今月の予測
     today = dt.now(timezone.utc)
@@ -112,17 +267,63 @@ def create_email_html(sort_cost_data, budget_yen):
     predict_month_cost = cost_per_day * 31
 
     # 予算との差分
-    diff_budget_predict = budget_yen - predict_month_cost * RATE
+    diff_budget_predict = budget_yen - predict_month_cost
+
+    # アカウントごと
+    per_account = ""
+    for account_id, cost_data in sort_cost_data["AWS_Accounts"].items():
+        per_account += (
+            f"<tr><td>{account_id}</td><td>{cost_data*RATE:,.0f} 円</td></tr>"
+        )
+    for account_id, cost_data in sort_cost_data["Azure_Accounts"].items():
+        per_account += f"<tr><td>{account_id}</td><td>{cost_data:,.0f} 円</td></tr>"
 
     cost_report = f"""<div>
             <h2>これまでの利用料金</h2>
-            <p>{total_value*RATE:,.0f} 円</p>
+            <p>{total_value:,.0f} 円</p>
             <h2>今月の料金予測(31日で計算)</h2>
-            <p>{predict_month_cost*RATE:,.0f} 円</p>
+            <p>{predict_month_cost:,.0f} 円</p>
             <h2>予算との差分</h2>
-            <p>予算({budget_yen:,})-予測({predict_month_cost*RATE:,.0f})= {diff_budget_predict:,.0f} 円</p>
+            <p>予算({budget_yen:,})-予測({predict_month_cost:,.0f})= {diff_budget_predict:,.0f} 円</p>
             <h2>予算の利用割合</h2>
-            <p>{round(total_value*RATE*100/budget_yen)} %</p>
+            <p>{round(total_value*100/budget_yen)} %</p>
+        </div>
+
+        <div>
+            <h2>クラウドごとの利用料金</h2>
+            <table>
+                <thead>
+                    <tr>
+                        <th>クラウドプロバイダ</th>
+                        <th>利用料</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td>AWS</td>
+                        <td>{aws_total_cost:,.0f} 円</td>
+                    </tr>
+                    <tr>
+                        <td>Azure</td>
+                        <td>{azure_total_cost:,.0f} 円</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+
+        <div>
+            <h2>アカウントごとの利用料金</h2>
+            <table>
+                <thead>
+                    <tr>
+                        <th>アカウント</th>
+                        <th>利用料</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {per_account}
+                </tbody>
+            </table>
         </div>
 
         <div>
@@ -181,9 +382,37 @@ def send_email(project, cost_report):
 
 
 def lambda_handler(event, context):
-    project_data = get_ssm_parameter()
-    cost_datas = get_cost_and_usage()["ResultsByTime"]
-    sort_results = sort_out_cost(cost_datas, project_data)
+    project_data, az_credentials = get_ssm_parameter()
+
+    # AWS
+    aws_cost_datas = get_aws_cost_and_usage()
+    sort_aws_results, sort_aws_account_results = sort_out_aws_cost(
+        aws_cost_datas, project_data
+    )
+
+    # Azure
+    azure_cost_data = get_azure_cost_and_usage(az_credentials=az_credentials)
+    sort_azure_results, sort_azure_account_results = sort_out_azure_cost(
+        azure_cost_data, project_data
+    )
+
+    # join service
+    sort_results = {}
+    for project, sort_result in sort_aws_results.items():
+        sort_results[project] = {}
+        sort_results[project]["AWS"] = sort_result
+    for project, sort_result in sort_azure_results.items():
+        if sort_results.get(project, None) is not None:
+            sort_results[project]["Azure"] = sort_result
+        else:
+            sort_results[project]["Azure"] = sort_result
+
+    # join account
+    for project, sort_result in sort_aws_account_results.items():
+        sort_results[project]["AWS_Accounts"] = sort_result
+    for project, sort_result in sort_azure_account_results.items():
+        sort_results[project]["Azure_Accounts"] = sort_result
+
     for project, sort_result in sort_results.items():
         cost_report = create_email_html(
             sort_result, project_data["project_data"][project]["budget_yen"]
