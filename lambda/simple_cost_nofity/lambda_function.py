@@ -270,7 +270,7 @@ def create_email_html(sort_cost_data, budget_yen, account_names, az_credentials)
         tbody += f"""<tr>
                 <td>{i}</td>
                 <td>{item}</td>
-                <td>{value:,.2f} 円</td>
+                <td style='text-align: right;'>{value:,.2f} 円</td>
             </tr>"""
         i = i + 1
 
@@ -302,7 +302,7 @@ def create_email_html(sort_cost_data, budget_yen, account_names, az_credentials)
             per_account_data, key=lambda item: item[2], reverse=True
         )
     for account_id, account_name, cost_data in per_account_data:
-        per_account += f"<tr><td>{account_id}</td><td>{account_name}</td><td>{cost_data:,.0f} 円</td></tr>"
+        per_account += f"<tr><td>{account_id}</td><td>{account_name}</td><td style='text-align: right;'>{cost_data:,.0f} 円</td></tr>"
 
     cost_report = f"""<div>
             <h2>これまでの利用料金</h2>
@@ -327,11 +327,11 @@ def create_email_html(sort_cost_data, budget_yen, account_names, az_credentials)
                 <tbody>
                     <tr>
                         <td>AWS</td>
-                        <td>{aws_total_cost:,.0f} 円</td>
+                        <td style='text-align: right;'>{aws_total_cost:,.0f} 円</td>
                     </tr>
                     <tr>
                         <td>Azure</td>
-                        <td>{azure_total_cost:,.0f} 円</td>
+                        <td style='text-align: right;'>{azure_total_cost:,.0f} 円</td>
                     </tr>
                 </tbody>
             </table>
