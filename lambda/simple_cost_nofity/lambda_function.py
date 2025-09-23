@@ -27,6 +27,7 @@ else:
 ce_client = session.client("ce")
 ses_client = session.client("ses")
 ssm_client = session.client("ssm")
+org_client = session.client("organizations")
 SENDER_EMAIL = os.environ.get("SENDER_EMAIL")
 PROJECT_DATA_PARAMETER_NAME = os.environ.get("PROJECT_DATA_PARAMETER_NAME")
 SECRET_PARAMETER_NAME = os.environ.get("SECRET_PARAMETER_NAME")
@@ -82,6 +83,21 @@ def get_aws_cost_and_usage():
             break
 
     return all_results
+
+
+def get_all_account_names():
+    """
+    AWS OrganizationsからすべてのアカウントIDとアカウント名のマッピングを取得します。
+    """
+    account_map = {}
+    try:
+        paginator = org_client.get_paginator("list_accounts")
+        for page in paginator.paginate():
+            for account in page["Accounts"]:
+                account_map[account["Id"]] = account["Name"]
+    except Exception as e:
+        logger.error(f"Failed to list accounts from Organizations: {e}")
+    return account_map
 
 
 def sort_out_aws_cost(cost_datas, project_data):
@@ -235,7 +251,7 @@ def sort_out_azure_cost(cost_datas, project_data):
     return cost_results, cost_results_account
 
 
-def create_email_html(sort_cost_data, budget_yen):
+def create_email_html(sort_cost_data, budget_yen, account_names, az_credentials):
     # AWS
     aws_total_cost = sum(sort_cost_data["AWS"].values()) * RATE
     azure_total_cost = sum(sort_cost_data["Azure"].values())
@@ -270,13 +286,23 @@ def create_email_html(sort_cost_data, budget_yen):
     diff_budget_predict = budget_yen - predict_month_cost
 
     # アカウントごと
+    per_account_data = []
     per_account = ""
     for account_id, cost_data in sort_cost_data["AWS_Accounts"].items():
-        per_account += (
-            f"<tr><td>{account_id}</td><td>{cost_data*RATE:,.0f} 円</td></tr>"
-        )
+        account_name = account_names.get(account_id, account_id)
+        per_account_data.append([account_id, account_name, cost_data * RATE])
     for account_id, cost_data in sort_cost_data["Azure_Accounts"].items():
-        per_account += f"<tr><td>{account_id}</td><td>{cost_data:,.0f} 円</td></tr>"
+        account_name = "-"
+        for az_credential in az_credentials:
+            if az_credential["az_subscription_id"] == account_id:
+                account_name = az_credential["az_subscription_name"]
+                break
+        per_account_data.append([account_id, account_name, cost_data])
+        per_account_data = sorted(
+            per_account_data, key=lambda item: item[2], reverse=True
+        )
+    for account_id, account_name, cost_data in per_account_data:
+        per_account += f"<tr><td>{account_id}</td><td>{account_name}</td><td>{cost_data:,.0f} 円</td></tr>"
 
     cost_report = f"""<div>
             <h2>これまでの利用料金</h2>
@@ -316,7 +342,8 @@ def create_email_html(sort_cost_data, budget_yen):
             <table>
                 <thead>
                     <tr>
-                        <th>アカウント</th>
+                        <th>アカウントID</th>
+                        <th>アカウント名</th>
                         <th>利用料</th>
                     </tr>
                 </thead>
@@ -385,6 +412,7 @@ def lambda_handler(event, context):
     project_data, az_credentials = get_ssm_parameter()
 
     # AWS
+    account_names = get_all_account_names()
     aws_cost_datas = get_aws_cost_and_usage()
     sort_aws_results, sort_aws_account_results = sort_out_aws_cost(
         aws_cost_datas, project_data
@@ -415,7 +443,10 @@ def lambda_handler(event, context):
 
     for project, sort_result in sort_results.items():
         cost_report = create_email_html(
-            sort_result, project_data["project_data"][project]["budget_yen"]
+            sort_result,
+            project_data["project_data"][project]["budget_yen"],
+            account_names,
+            az_credentials,
         )
         send_email(project, cost_report)
 
