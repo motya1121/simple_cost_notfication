@@ -1,2 +1,4 @@
 requests
 urllib3<2
+azure-identity
+azure-mgmt-costmanagement

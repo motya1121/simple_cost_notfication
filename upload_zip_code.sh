@@ -20,6 +20,17 @@ for LAMBDA_FUNC_NAME in "${LAMBDA_FUNC_NAMEs[@]}"; do
     rm -r idna
     rm -r requests
     rm -r urllib3
+    rm -r azure
+    rm -r cffi
+    rm -r cryptography
+    rm -r isodate
+    rm -r jwt
+    rm -r msal
+    rm -r msal_extensions
+    rm -r pycparser
+    rm _cffi_backend.cpython-312-x86_64-linux-gnu.so
+    rm six.py
+    rm typing_extensions.py
     cd ..
 
     aws lambda update-function-code --function-name ${LAMBDA_FUNC_NAME} --zip-file fileb://${LAMBDA_FUNC_NAME}.zip --region ${Region} --output text --profile ${PROFILE_NAME}
