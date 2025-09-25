@@ -12,6 +12,14 @@ Parameters:
     Description: 'ARN for the new SecureString parameter in SSM Parameter Store.'
     Default: '/SimpleCostNotification/AZClientSecret'
 
+Conditions:
+  ProjectDataHasLeadingSlash: !Equals 
+    - !Select [ 0, !Split [ '/', !Ref ProjectDataParameterName ] ]
+    - ""
+  AZClientSecretHasLeadingSlash: !Equals 
+    - !Select [ 0, !Split [ '/', !Ref AZClientSecretParameterName ] ]
+    - ""
+
 Resources:
   LambdaExecutionRole:
     Type: AWS::IAM::Role
@@ -45,8 +53,14 @@ Resources:
                 Action:
                   - ssm:GetParameter
                 Resource:
-                  - !Sub 'arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/${ProjectDataParameterName}'
-                  - !Sub 'arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/${AZClientSecretParameterName}'
+                  - !If 
+                    - ProjectDataHasLeadingSlash
+                    - !Sub 'arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter${ProjectDataParameterName}'
+                    - !Sub 'arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/${ProjectDataParameterName}'
+                  - !If
+                    - AZClientSecretHasLeadingSlash
+                    - !Sub 'arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter${AZClientSecretParameterName}'
+                    - !Sub 'arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/${AZClientSecretParameterName}'
         - PolicyName: LambdaCostExplorerPolicy
           PolicyDocument:
             Version: '2012-10-17'
