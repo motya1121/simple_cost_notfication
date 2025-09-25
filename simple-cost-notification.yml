@@ -69,6 +69,14 @@ Resources:
                 Action:
                   - ce:GetCostAndUsage
                 Resource: '*'
+        - PolicyName: LambdaOrganizationsPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - organizations:ListAccounts
+                Resource: '*'
 
   SimpleCostNotifyLambda:
     Type: AWS::Lambda::Function

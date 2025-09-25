@@ -298,9 +298,7 @@ def create_email_html(sort_cost_data, budget_yen, account_names, az_credentials)
                 account_name = az_credential["az_subscription_name"]
                 break
         per_account_data.append([account_id, account_name, cost_data])
-        per_account_data = sorted(
-            per_account_data, key=lambda item: item[2], reverse=True
-        )
+    per_account_data = sorted(per_account_data, key=lambda item: item[2], reverse=True)
     for account_id, account_name, cost_data in per_account_data:
         per_account += f"<tr><td>{account_id}</td><td>{account_name}</td><td style='text-align: right;'>{cost_data:,.0f} 円</td></tr>"
 
