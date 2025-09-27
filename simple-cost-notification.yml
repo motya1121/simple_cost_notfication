@@ -95,6 +95,8 @@ Resources:
           SECRET_PARAMETER_NAME: !Ref AZClientSecretParameterName
           SUBJECT: "simple cost notification"
           RATE_VALUE: 150
+          IS_DEBUG: True
+          IS_SEND_DEBUG_MAIL: True
       Code:
         ZipFile: |
           import json
