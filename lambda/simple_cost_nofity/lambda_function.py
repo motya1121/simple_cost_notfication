@@ -32,7 +32,9 @@ SENDER_EMAIL = os.environ.get("SENDER_EMAIL")
 PROJECT_DATA_PARAMETER_NAME = os.environ.get("PROJECT_DATA_PARAMETER_NAME")
 SECRET_PARAMETER_NAME = os.environ.get("SECRET_PARAMETER_NAME")
 SUBJECT = os.environ.get("SUBJECT", "simple cost notification")
-RATE = float(os.environ.get("RATE_VALUE"))
+RATE = float(os.environ.get("RATE_VALUE", "150"))
+IS_DEBUG = os.environ.get("IS_DEBUG", "False").lower() == "true"
+IS_SEND_DEBUG_MAIL = os.environ.get("IS_SEND_DEBUG_MAIL", "False").lower() == "true"
 
 
 def get_ssm_parameter():
@@ -380,9 +382,13 @@ def send_email(project, cost_report):
     else:
         percent = int(today.day) * 100 / 30
 
+    email_subject = f"{SUBJECT} - {project}"
+    if IS_SEND_DEBUG_MAIL:
+        email_subject = f"DEBUG - {email_subject}"
+
     body_html = f"""<html>
     <body>
-        <h1>{SUBJECT} - {project}(今月の{round(percent)}%終了)</h1>
+        <h1>{email_subject}(今月の{round(percent)}%終了)</h1>
         {cost_report}
     </body>
     </html>"""
@@ -396,7 +402,7 @@ def send_email(project, cost_report):
                 ],
             },
             Message={
-                "Subject": {"Data": f"{SUBJECT} - {project}", "Charset": charset},
+                "Subject": {"Data": email_subject, "Charset": charset},
                 "Body": {"Html": {"Data": body_html, "Charset": charset}},
             },
         )
@@ -422,6 +428,29 @@ def lambda_handler(event, context):
         azure_cost_data, project_data
     )
 
+    log_dir = ""
+    if IS_DEBUG:
+        timestamp = dt.now(timezone.utc).strftime("%Y-%m-%d_%H-%M-%S")
+        log_dir = f"./logs/{timestamp}"
+        os.makedirs(log_dir, exist_ok=True)
+        logger.info(f"IS_DEBUG is true. Saving debug files to {log_dir}.")
+
+        try:
+            with open(f"{log_dir}/aws_cost_data.json", "w") as f:
+                json.dump(aws_cost_datas, f, indent=2, default=str)
+            with open(f"{log_dir}/azure_cost_data.json", "w") as f:
+                json.dump(azure_cost_data, f, indent=2, default=str)
+            with open(f"{log_dir}/sorted_aws_by_service.json", "w") as f:
+                json.dump(sort_aws_results, f, indent=2, default=str)
+            with open(f"{log_dir}/sorted_aws_by_account.json", "w") as f:
+                json.dump(sort_aws_account_results, f, indent=2, default=str)
+            with open(f"{log_dir}/sorted_azure_by_service.json", "w") as f:
+                json.dump(sort_azure_results, f, indent=2, default=str)
+            with open(f"{log_dir}/sorted_azure_by_account.json", "w") as f:
+                json.dump(sort_azure_account_results, f, indent=2, default=str)
+        except Exception as e:
+            logger.error(f"Failed to write debug cost data: {e}")
+
     # join service
     sort_results = {}
     for project, sort_result in sort_aws_results.items():
@@ -439,6 +468,13 @@ def lambda_handler(event, context):
     for project, sort_result in sort_azure_account_results.items():
         sort_results[project]["Azure_Accounts"] = sort_result
 
+    if IS_DEBUG:
+        try:
+            with open(f"{log_dir}/final_combined_data.json", "w") as f:
+                json.dump(sort_results, f, indent=2, default=str)
+        except Exception as e:
+            logger.error(f"Failed to write final combined data: {e}")
+
     for project, sort_result in sort_results.items():
         cost_report = create_email_html(
             sort_result,
@@ -446,7 +482,18 @@ def lambda_handler(event, context):
             account_names,
             az_credentials,
         )
-        send_email(project, cost_report)
+
+        if IS_DEBUG:
+            try:
+                with open(f"{log_dir}/email_body_{project}.html", "w") as f:
+                    f.write(cost_report)
+            except Exception as e:
+                logger.error(f"Failed to write debug email body for {project}: {e}")
+        else:
+            send_email(project, cost_report)
+
+    if IS_DEBUG:
+        logger.info("Debug mode finished. No emails were sent.")
 
 
 if __name__ == "__main__":
